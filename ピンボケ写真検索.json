@@ -1,0 +1,446 @@
+{
+  "name": "ピンボケ写真検索",
+  "nodes": [
+    {
+      "parameters": {
+        "filePath": "={{ $json.filePath }}"
+      },
+      "id": "90f4cbd1-6278-42b2-b39f-2a1b35f6aa15",
+      "name": "画像ファイルの読み込み",
+      "type": "n8n-nodes-base.readBinaryFile",
+      "typeVersion": 1,
+      "position": [-1056, 192],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "analyze",
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.1-flash-lite",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.1-flash-lite"
+        },
+        "text": "# 役割\nあなたは写真の品質審査AIです。提出された写真を分析し、保存すべきかどうかを判定します。\n\n# 判定基準\n\n## MOVE（不要として移動）\n以下のいずれか1つでも該当する場合は「MOVE」と判定してください。\n\n1. ボケ・ブレ\n   - 写真全体、または主要な被写体が大きくピンぼけしている\n   - 手ブレ・被写体ブレが激しく、細部が不鮮明\n\n2. 誤撮影・主題不明\n   - 何を撮影しようとしたか主題（主役）が判断できない\n   - 誤操作により床・壁・服・地面などの一部が偶発的に写り込んだと判断できる\n   - 構図が破綻しており、撮影意図が読み取れない\n\n3. 不要な被写体・場面\n   以下のいずれかが写真の主題になっている場合はMOVEとする。\n   ※ 風景・人物写真の背景に小さく写り込んでいる程度はKEEPとする。\n\n   - マンホール・側溝蓋・グレーチング（道路・歩道上のもの）\n   - 工場・倉庫・プラントなどの施設内に設置された機械・設備・配管\n   - 工場・倉庫・工業施設の外観または内部の全景\n   - 建物が建っていない更地・空き地・造成地の全景\n   - 書類・伝票・メモ・ホワイトボードなど文字情報が主体のもの\n   - 食事・飲み物など（記念・記録目的でなく誤撮影と判断できるもの）\n   - 上記に準じる、明らかに個人の思い出として保存する意図がないと判断できる記録写真・業務写真\n\n## KEEP（保存）\n上記のいずれにも該当しない、通常の意図を持って撮影された写真。\n\n# 出力形式\n応答は以下のJSON形式**のみ**を出力してください。\n前後の挨拶・説明文・マークダウンの```json などは一切含めないでください。\n\n{\"judgment\":\"KEEP\",\"reason\":\"判定理由を簡潔に記載\"}",
+        "inputType": "binary",
+        "options": {}
+      },
+      "id": "381bd360-e68a-40fd-b0e5-6b1418007581",
+      "name": "Geminiによる不要写真判定",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [-848, 48]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ JSON.parse($json.content.parts[0].text).judgment }}",
+              "value2": "=MOVE"
+            }
+          ]
+        }
+      },
+      "id": "50b8ffa4-9bbb-4049-b435-4dff68d4b8df",
+      "name": "不要写真判定結果チェック",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [-656, 48]
+    },
+    {
+      "parameters": {
+        "jsCode": "let fileName = \"\";\n\n// 1. まず '未処理写真の抽出と件数制限'（ループ前のノード）から直接ファイル名を取得してみる\ntry {\n    fileName = $('未処理写真の抽出と件数制限').item.json.fileName || \"\";\n} catch(e) {}\n\n// 2. もし取得できなかった場合のバックアップ（filePathからファイル名部分を自動で切り出す）\nif (!fileName) {\n    let filePath = \"\";\n    try {\n        filePath = $('未処理写真の抽出と件数制限').item.json.filePath || \"\";\n    } catch(e) {}\n    \n    if (!filePath) {\n        try {\n            filePath = $('画像ファイルの読み込み').item.json.filePath || \"\";\n        } catch(e) {}\n    }\n    \n    // フルパスからファイル名（末尾）だけを切り分ける\n    if (filePath) {\n        fileName = filePath.split('/').pop().split('\\\\').pop();\n    }\n}\n\n// 3. ファイル名 + 改行コードをセット\nconst content = fileName ? (fileName + \"\\n\") : \"\";\n\nconst binaryData = await this.helpers.prepareBinaryData(\n    Buffer.from(content, 'utf8'),\n    'processed.txt',\n    'text/plain'\n);\n\nreturn [{\n    json: { fileName: fileName, logged: !!fileName },\n    binary: { fileContent: binaryData }\n}];"
+      },
+      "id": "4e7f8a4a-3359-4997-9887-178cb6c40ff5",
+      "name": "処理済み写真ログの準備",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-240, 208]
+    },
+    {
+      "parameters": {
+        "fileSelector": "/home/node/.n8n-files/picture/2018/*2018_07/**/*",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [-1344, -32],
+      "id": "d0d7c039-dd94-4ff7-8b4c-84449f33cb17",
+      "name": "写真フォルダ内の一覧取得"
+    },
+    {
+      "parameters": {
+        "jsCode": "const BASE_PATH = \"/home/node/.n8n-files/picture\";\n\n// 1. 処理済みログテキスト化 ノードから、完全にテキスト化した processed.txt の中身を取得する\nlet processedText = \"\";\ntry {\n    processedText = $('処理済みログテキスト化').first().json.data || \"\";\n} catch (e) {\n    processedText = \"\";\n    console.log(\"processed.txtのテキスト化データが見つかりませんでした\");\n}\n\n// 2. processed.txt の中身からファイル名だけを切り出し、小文字にして Set に登録\nconst processedFiles = new Set(\n    processedText\n        .split(/\\r?\\n|\\\\n/)\n        .map(line => line.trim())\n        .filter(line => line !== \"\")\n        .map(line => line.split('/').pop().split('\\\\').pop().toLowerCase())\n);\n\n// 3. 全ファイルリストを処理\nconst allInputItems = $input.all();\nconst todoFiles = [];\n\nfor (const item of allInputItems) {\n    // ★【重要修正】バイナリメタデータからファイル情報を取得する\n    // item.json ではなく item.binary.data に fileName や directory が格納されている\n    const binData = (item.binary && item.binary.data) ? item.binary.data : {};\n    \n    const name = binData.fileName              // ← バイナリメタデータの File Name\n              || item.json[\"fileName\"]         // ← 念のため JSON も確認\n              || item.json[\"File Name\"]\n              || item.json[\"name\"]\n              || \"\";\n              \n    if (!name || name === \"processed.txt\") continue;\n\n    // 比較用にファイル名を小文字に変換\n    const lowerName = name.trim().toLowerCase();\n\n    // ★ファイル名のみで照合して、既に処理済みならスキップ！\n    if (processedFiles.has(lowerName)) {\n        continue;\n    }\n\n    // ★【重要修正】実在する正しいディレクトリをバイナリメタデータから取得\n    const actualDir = binData.directory || \"\";  // ← バイナリメタデータの Directory\n    \n    let filePath = \"\";\n    let dirPath = \"\";\n\n    if (actualDir) {\n        // バイナリメタデータに実在するディレクトリがあれば、それを使う（最も確実）\n        dirPath = actualDir;\n        filePath = `${dirPath}/${name}`;\n    } else if (item.json[\"filePath\"]) {\n        // JSON に filePath があればそのまま使う\n        filePath = item.json[\"filePath\"];\n        dirPath = filePath.substring(0, filePath.lastIndexOf('/'));\n    } else {\n        // 最終フォールバック: ファイル名から日付フォルダを推測\n        dirPath = BASE_PATH;\n        const dateMatch = name.match(/^(\\d{4})(\\d{2})\\d{2}/);\n        if (dateMatch) {\n            const year = dateMatch[1];\n            const month = dateMatch[2];\n            dirPath = `${BASE_PATH}/${year}/${year}-${month}`;\n        }\n        filePath = `${dirPath}/${name}`;\n    }\n\n    todoFiles.push({\n        json: { filePath, fileName: name, directory: dirPath }\n    });\n}\n\n// 4. 終了判定とバッチ処理\nif (todoFiles.length === 0) {\n    return [{ json: {\n        message: \"未処理の写真はありませんでした。\",\n        処理済み件数: processedFiles.size\n    }}];\n}\n\nconst dailyLimit = 500;\nconst batch = todoFiles.slice(0, dailyLimit);\nconsole.log(`未処理合計: ${todoFiles.length}件 → 本日処理分: ${batch.length}件`);\n\nreturn batch;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1104, -32],
+      "id": "17cd0662-58c9-4808-a767-ef547d239b96",
+      "name": "未処理写真の抽出と件数制限",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [-1360, 176],
+      "id": "ac09b2fb-b0a5-4cee-a6f8-2ff71a0da240",
+      "name": "写真ごとにループ"
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "/home/node/.n8n-files/progress/processed.txt",
+        "dataPropertyName": "=fileContent",
+        "options": {
+          "append": true
+        }
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [0, 208],
+      "id": "20faf8f4-875c-46b3-afd2-ba1a34238467",
+      "name": "処理済み写真ログの追記保存"
+    },
+    {
+      "parameters": {
+        "fileSelector": "/home/node/.n8n-files/progress/processed.txt",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [-1344, -240],
+      "id": "f6d1da8d-d4be-46a5-8118-80825987270c",
+      "name": "処理済みログ読み込み"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [-1104, -240],
+      "id": "358a75a7-d162-43f4-adf8-d3eb1663b51c",
+      "name": "処理済みログテキスト化"
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "/home/node/.n8n-files/progress/photo_list.xlsx",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [416, -64],
+      "id": "73920b9e-339c-4c61-8c2d-546bf2a693c5",
+      "name": "ピンぼけ写真一覧エクセル出力"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ★画像ファイルの読み込みノードからバイナリメタデータを直接取得\nconst imageNodeItem = $('画像ファイルの読み込み').first();\nconst binData = imageNodeItem.binary?.data || {};\nconst jsonData = $input.first().json || {};\n\n// バイナリメタデータからファイル情報を取得\nlet fileName = binData.fileName || \"\";\nlet filePath = binData.directory \n    ? `${binData.directory}/${fileName}` \n    : \"\";\n\n// 念のためJSONからも取得を試みる\nif (!fileName) {\n    fileName = jsonData.fileName || \"\";\n    filePath = jsonData.filePath || \"\";\n}\n\n// Gemini の判定理由を取得\nlet reason = \"\";\ntry {\n    const text = jsonData.content?.parts?.[0]?.text || \"\";\n    const parsed = JSON.parse(text);\n    reason = parsed.reason || \"\";\n} catch (e) {}\n\n// ★画像ファイルでない場合はスキップ（空のアイテムを返す）\nif (!fileName || !/\\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(fileName)) {\n    return [{ json: { \n        \"ファイル名\": \"\", \n        \"Windowsパス\": \"\", \n        \"判定理由\": \"\", \n        \"リンクURL\": \"\" \n    }}];\n}\n\nconst windowsPath = filePath\n    .replace('/home/node/.n8n-files/picture', 'D:\\\\Pictures')\n    .replace(/\\//g, '\\\\');\n\n// ★修正箇所：各行番号に応じたHYPERLINK関数を生成\nconst results = [];\nconst items = $input.all(); // 全アイテムを取得\n\nfor (let i = 0; i < items.length; i++) {\n    // Excelの行番号は2行目から始まる（ヘッダー行が1行目）\n    const excelRow = i + 2;\n    \n    // リンクURLにHYPERLINK関数を設定（D列のセルを参照）\n    const hyperlinkFunction = `=HYPERLINK(B${excelRow})`;\n    \n    results.push({\n        json: {\n            \"ファイル名\": fileName,\n            \"Windowsパス\": windowsPath,\n            \"判定理由\": reason,\n            \"リンクURL\": hyperlinkFunction\n        }\n    });\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-448, -48],
+      "id": "e2d075ef-0789-441e-9315-eb2b0a5c2661",
+      "name": "エクセル用出力データの生成",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "fileSelector": "/home/node/.n8n-files/progress/photo_list.xlsx",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [-272, -208],
+      "id": "67029e88-ff64-45cc-b2ba-c6f01932e029",
+      "name": "既存エクセル読み込み"
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [-144, -208],
+      "id": "9bf172d4-fe80-45de-b5fb-ad233019a012",
+      "name": "既存エクセルデータ抽出"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [32, -64],
+      "id": "a0472762-46c9-4516-8d79-b912f97451de",
+      "name": "データ結合"
+    },
+    {
+      "parameters": {
+        "amount": 30
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [544, 208],
+      "id": "3751ecee-01ec-4211-a8c5-63c7ecc113e9",
+      "name": "待機"
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [224, -64],
+      "id": "9c8e0f31-0c65-46b0-aa08-ba20943684e0",
+      "name": "エクセルファイル変換"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-1328, -432],
+      "id": "6f39c29e-fd1c-4ac2-b07a-8d2b19bed01f",
+      "name": "実行ボタンで開始"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "画像ファイルの読み込み": {
+      "main": [
+        [
+          {
+            "node": "Geminiによる不要写真判定",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "処理済み写真ログの準備",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Geminiによる不要写真判定": {
+      "main": [
+        [
+          {
+            "node": "不要写真判定結果チェック",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "不要写真判定結果チェック": {
+      "main": [
+        [
+          {
+            "node": "エクセル用出力データの生成",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "処理済み写真ログの準備",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "処理済み写真ログの準備": {
+      "main": [
+        [
+          {
+            "node": "処理済み写真ログの追記保存",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "写真フォルダ内の一覧取得": {
+      "main": [
+        [
+          {
+            "node": "未処理写真の抽出と件数制限",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "未処理写真の抽出と件数制限": {
+      "main": [
+        [
+          {
+            "node": "写真ごとにループ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "写真ごとにループ": {
+      "main": [
+        [],
+        [
+          {
+            "node": "画像ファイルの読み込み",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "処理済み写真ログの追記保存": {
+      "main": [
+        [
+          {
+            "node": "待機",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "処理済みログ読み込み": {
+      "main": [
+        [
+          {
+            "node": "処理済みログテキスト化",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "処理済みログテキスト化": {
+      "main": [
+        [
+          {
+            "node": "写真フォルダ内の一覧取得",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ピンぼけ写真一覧エクセル出力": {
+      "main": [
+        [
+          {
+            "node": "処理済み写真ログの準備",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "エクセル用出力データの生成": {
+      "main": [
+        [
+          {
+            "node": "データ結合",
+            "type": "main",
+            "index": 1
+          },
+          {
+            "node": "既存エクセル読み込み",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "既存エクセル読み込み": {
+      "main": [
+        [
+          {
+            "node": "既存エクセルデータ抽出",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "既存エクセルデータ抽出": {
+      "main": [
+        [
+          {
+            "node": "データ結合",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "データ結合": {
+      "main": [
+        [
+          {
+            "node": "エクセルファイル変換",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "待機": {
+      "main": [
+        [
+          {
+            "node": "写真ごとにループ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "エクセルファイル変換": {
+      "main": [
+        [
+          {
+            "node": "ピンぼけ写真一覧エクセル出力",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "実行ボタンで開始": {
+      "main": [
+        [
+          {
+            "node": "処理済みログ読み込み",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}
